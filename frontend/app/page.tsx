@@ -1,18 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
+type AuditEvent = {
+  id: number;
+  message: string;
+  detail: string;
+  status: "ACTIVE" | "SUCCESS" | "BLOCKED";
+};
 export default function Home() {
   const cart = {
-  items: [
-    {
-      name: "Wireless Headphones",
-      price: 1999,
-    },
-    {
-      name: "USB-C Cable",
-      price: 500,
-    },
-  ],
-  total: 2499,
+    items: [
+      { 
+        name: "Wireless Headphones", 
+        price: 1999, 
+        quantity: 1 
+      },
+      { 
+        name: "USB-C Cable",
+        price: 500, 
+        quantity: 1 
+      },
+    ],
+    total: 2499,
   };
 
   const trustedPrices: Record<string, number> = {
@@ -20,23 +28,72 @@ export default function Home() {
     "USB-C Cable": 500,
   };
 
+  const trustedInventory: Record<string, number> = {
+    "Wireless Headphones": 5,
+    "USB-C Cable": 12,
+  };
+
   const calculatedTotal = cart.items.reduce(
-    (sum, item) => sum + item.price,
+    (sum, item) => sum + (item.price * item.quantity),
     0
   );
 
-  const totalVerified = calculatedTotal === cart.total;
+  const quantityIssues = cart.items.filter(
+    (item) => item.quantity <= 0
+  );
+
+  const quantityVerified = quantityIssues.length === 0;
+
+  const inventoryIssues = cart.items.filter(
+    (item) =>
+      item.quantity > 0 &&
+      item.quantity > (trustedInventory[item.name] ?? 0)
+  );
+
+  const inventoryVerified = inventoryIssues.length === 0;
+
+  const totalVerified = calculatedTotal === cart.total; 
 
   const priceIssues = cart.items.filter(
     (item) => trustedPrices[item.name] !== item.price
   );
 
   const priceVerified =
-    priceIssues.length === 0 && totalVerified;
+    priceIssues.length === 0 && 
+    totalVerified;
 
-  const guardianProtected = priceVerified;  
+  const guardianProtected = 
+    priceVerified && 
+    inventoryVerified && 
+    quantityVerified;  
+
   const guardianDecision: "ALLOW" | "BLOCK" =
   guardianProtected ? "ALLOW" : "BLOCK";
+
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([
+    {
+      id: 1,
+      message: "Guardian initialized",
+      detail: "Transaction protection session started",
+      status: "ACTIVE",
+    },
+  ]);
+  
+  const addAuditEvent = (
+    message: string,
+    detail: string,
+    status: AuditEvent["status"]
+  ) => {
+    setAuditEvents((previousEvents) => [
+      {
+        id: Date.now(),
+        message,
+        detail,
+        status,
+      },
+      ...previousEvents,
+    ]);
+  };
 
   const [message, setMessage] = useState("");
 
@@ -49,12 +106,47 @@ export default function Home() {
   }, [guardianProtected]);
 
   const handleCheckout = () => {
+    if (checkoutStatus !== "idle") {
+      return;
+    }
+
     if (guardianDecision === "BLOCK") {
       setCheckoutStatus("blocked");
+
+      const blockReasons = [
+        ...(priceIssues.length > 0
+          ? [`${priceIssues.length} product price issue detected`]
+          : []),
+
+        ...(!totalVerified
+          ? ["Cart total failed integrity validation"]
+          : []),
+        
+        ...(quantityIssues.length > 0
+          ? [`${quantityIssues.length} quantity issue detected`]
+          : []),  
+
+        ...(inventoryIssues.length > 0
+          ? [`${inventoryIssues.length} inventory issue detected`]
+          : []),
+      ];
+
+      addAuditEvent(
+        "Checkout blocked",
+        blockReasons.join(" · "),
+        "BLOCKED"
+      );
+
       return;
     }
 
     setCheckoutStatus("allowed");
+
+    addAuditEvent(
+      "Checkout authorized",
+      `Guardian decision: ALLOW · Cart total ₹${cart.total.toLocaleString("en-IN")}`,
+      "SUCCESS"
+    );
   };
 
   const [response, setResponse] = useState("");
@@ -129,8 +221,11 @@ export default function Home() {
             index > 0 ? "text-slate-400" : ""
           }`}
         >
-          <span>{item.name}</span>
-          <span>₹{item.price.toLocaleString("en-IN")}</span>
+          <span>
+            {item.name}
+            {item.quantity > 1 ? ` × ${item.quantity}` : ""}
+          </span>
+          <span>₹{(item.price * item.quantity).toLocaleString("en-IN")}</span>
         </div>
       ))}
 
@@ -152,7 +247,7 @@ export default function Home() {
         {checkoutStatus === "blocked" && (
         <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
           <p className="font-semibold">
-            ⚠ Price mismatch detected
+            ⚠ Guardian blocked checkout
           </p>
 
           {priceIssues.map((item) => (
@@ -160,6 +255,19 @@ export default function Home() {
             <span className="font-medium">{item.name}</span>: cart shows ₹
             {item.price.toLocaleString("en-IN")}, trusted price is ₹
             {trustedPrices[item.name].toLocaleString("en-IN")}.
+          </p>
+        ))}
+
+          {quantityIssues.map((item) => (
+          <p key={`quantity-${item.name}`} className="mt-2">
+            <span className="font-medium">{item.name}</span>: quantity must be at least 1.
+          </p>
+        ))}    
+
+          {inventoryIssues.map((item) => (
+          <p key={`inventory-${item.name}`} className="mt-2">
+            <span className="font-medium">{item.name}</span>: requested{" "}
+            {item.quantity}, but only {trustedInventory[item.name] ?? 0} available.
           </p>
         ))}
 
@@ -266,7 +374,22 @@ export default function Home() {
             <div className="mt-6 space-y-3 text-sm">
               <div className="flex justify-between">
                 <span className="text-slate-400">Inventory check</span>
-                <span className="text-emerald-400">Ready</span>
+
+                  {inventoryVerified ? (
+                    <span className="text-emerald-400">✓ Verified</span>
+                  ) : (
+                  <span className="text-red-400">⚠ Insufficient</span>
+                )}
+              </div>
+              
+              <div className="flex justify-between">
+                <span className="text-slate-400">Quantity check</span>
+
+              {quantityVerified ? (
+                <span className="text-emerald-400">✓ Verified</span>
+              ) : (
+                <span className="text-red-400">⚠ Invalid</span>
+              )}
               </div>
 
               <div className="flex justify-between">
@@ -281,7 +404,7 @@ export default function Home() {
 
               <div className="flex justify-between">
                 <span className="text-slate-400">Payment protection</span>
-                <span className="text-emerald-400">Ready</span>
+                <span className="text-emerald-400">Pending</span>
               </div>
             </div>
           </div>
@@ -301,29 +424,33 @@ export default function Home() {
           </div>
 
           <div className="mt-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div>
-                <p className="text-sm">Cart created</p>
-                <p className="text-xs text-slate-500">2 minutes ago</p>
-              </div>
-              <span className="text-xs text-emerald-400">SUCCESS</span>
-            </div>
+          {auditEvents.map((event, index) => (
+          <div
+            key={event.id}
+            className={`flex items-center justify-between ${
+              index < auditEvents.length - 1
+              ? "border-b border-slate-800 pb-4"
+              : ""
+            }`}
+          >
+          <div>
+            <p className="text-sm">{event.message}</p>
+            <p className="text-xs text-slate-500">{event.detail}</p>
+          </div>
 
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div>
-                <p className="text-sm">Inventory verified</p>
-                <p className="text-xs text-slate-500">1 minute ago</p>
-              </div>
-              <span className="text-xs text-emerald-400">SUCCESS</span>
+              <span
+                    className={`text-xs ${
+                      event.status === "BLOCKED"
+                      ? "text-red-400"
+                      : event.status === "SUCCESS"
+                      ? "text-emerald-400"
+                      : "text-sky-400"
+                    }`}
+                  >
+                {event.status}
+              </span>
             </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm">Guardian initialized</p>
-                <p className="text-xs text-slate-500">Just now</p>
-              </div>
-              <span className="text-xs text-emerald-400">ACTIVE</span>
-            </div>
+            ))}
           </div>
         </section>
 
